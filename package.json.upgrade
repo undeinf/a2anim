@@ -1,0 +1,53 @@
+{
+  "name": "novartis.o365.msteamsapp",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@fluentui/docs-components": "^0.53.0",
+    "@fluentui/react": "^7.164.0",
+    "@fluentui/react-icons": "^0.4.1",
+    "@fluentui/react-northstar": "^0.53.0",
+    "@microsoft/sp-core-library": "1.11.0",
+    "@microsoft/sp-lodash-subset": "1.11.0",
+    "@microsoft/sp-office-ui-fabric-core": "1.11.0",
+    "@microsoft/sp-property-pane": "1.11.0",
+    "@microsoft/sp-webpart-base": "1.11.0",
+    "@microsoft/teams-js": "^1.9.0",
+    "@pnp/spfx-controls-react": "^2.4.0",
+    "@types/jest": "^26.0.20",
+    "@types/node": "^14.14.34",
+    "@uifabric/example-data": "^7.1.5",
+    "axios": "^0.21.1",
+    "bootstrap": "^4.6.0",
+    "jquery": "^3.6.0",
+    "kill-process-on-port": "^1.0.2",
+    "merge": "^1.2.1",
+    "office-ui-fabric-react": "6.214.0",
+    "oidc-client": "^1.11.5",
+    "react": "^16.14.0",
+    "react-dom": "^16.14.0",
+    "react-router-bootstrap": "^0.25.0",
+    "react-router-dom": "^5.2.0",
+    "react-scripts": "^3.4.4",
+    "react-scroll": "^1.8.4",
+    "reactstrap": "^8.9.0",
+    "rewire": "^5.0.0",
+    "rimraf": "^5.0.5",
+    "sp-pnp-js": "^3.0.10"
+  },
+  "devDependencies": {
+    "@microsoft/rush-stack-compiler-3.3": "0.3.5",
+    "@microsoft/sp-build-web": "1.11.0",
+    "cross-env": "^7.0.3"
+  },
+  "scripts": {
+    "start": "cross-env NODE_OPTIONS=--openssl-legacy-provider rimraf ./build && react-scripts start",
+    "build": "cross-env NODE_OPTIONS=--openssl-legacy-provider node ./build.js",
+    "test": "cross-env NODE_OPTIONS=--openssl-legacy-provider cross-env CI=true react-scripts test --env=jsdom",
+    "eject": "react-scripts eject",
+    "lint": "eslint ./src/",
+    "pre:m365-build": "node ./pre-m365-build.js",
+    "m365-build": "npm run pre:m365-build && npm run build && npm run post:m365-build",
+    "post:m365-build": "node ./post-m365-build.js"
+  }
+}
