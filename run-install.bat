@@ -9,8 +9,10 @@ if %ERRORLEVEL% equ 0 goto :force_cmd
 goto :check_node
 
 :force_cmd
+echo.
 echo [WARNING] This script must run in Native Command Prompt (CMD), not PowerShell.
 echo Re-launching in a clean CMD window...
+echo.
 pause
 start cmd.exe /c "%~dp0%~nx0"
 exit /b
@@ -24,20 +26,29 @@ set "NODE_BIN_DIR="
 
 :: Scan immediate subdirectories for the portable node executable
 for /d %%i in ("%SCRIPT_DIR%*") do (
-    if exist "%%i\node.exe" (
-        set "NODE_BIN_DIR=%%i"
+    if exist "%%~i\node.exe" (
+        set "NODE_BIN_DIR=%%~i"
         goto :node_found
     )
 )
 
+:: If loop finishes with no match, NODE_BIN_DIR stays empty
+goto :node_not_found
+
 :node_found
-if not "%NODE_BIN_DIR%"=="" goto :setup_paths
+if defined NODE_BIN_DIR goto :setup_paths
+
+:node_not_found
 cls
 echo ===================================================
 echo  ERROR: PORTABLE NODE FOLDER NOT FOUND
 echo ===================================================
-echo Could not locate a folder containing 'node.exe' in this directory.
-echo Please ensure you have extracted your Node 16 ZIP here.
+echo.
+echo Could not locate a folder containing 'node.exe' under:
+echo   %SCRIPT_DIR%
+echo.
+echo Please ensure you have extracted your Node 16 ZIP into
+echo a subfolder here (e.g. node16\node.exe).
 echo.
 pause
 exit /b 1
@@ -49,10 +60,10 @@ exit /b 1
 set "NPM_BIN_DIR=%NODE_BIN_DIR%\node_modules\npm\bin"
 set "NPM_CLI=%NPM_BIN_DIR%\npm-cli.js"
 
-:: Isolate environment path updates locally to this terminal session
+:: Prepend portable node to PATH for this session only
 set "PATH=%NODE_BIN_DIR%;%NPM_BIN_DIR%;%PATH%"
 
-:: Apply legacy OpenSSL provider option needed for Node 17+ and legacy Webpack/React 16
+:: Required for Node 17+ / legacy Webpack + React 16 builds
 set "NODE_OPTIONS=--openssl-legacy-provider"
 
 :: --------------------------------------------------------
@@ -60,21 +71,67 @@ set "NODE_OPTIONS=--openssl-legacy-provider"
 :: --------------------------------------------------------
 :menu
 cls
-echo ===================================================
-echo  Legacy Environment Controller (Node 16 Sandbox)
-echo ===================================================
-echo  Detected Node Path: %NODE_BIN_DIR%
 echo.
-echo  [1] Run First-Time Setup (npm install)
-echo  [2] Start Application (npm run m365-build)
-echo  [3] Exit
-echo ===================================================
+echo  ===================================================
+echo   Legacy Environment Controller (Node 16 Sandbox)
+echo  ===================================================
+echo   Node Path : %NODE_BIN_DIR%
+echo   npm CLI   : %NPM_CLI%
+echo  ---------------------------------------------------
+echo.
+echo   [1]  First-Time Setup    (npm install)
+echo   [2]  Start Application   (npm run m365-build)
+echo   [3]  Verify Environment  (node -v / npm -v)
+echo   [4]  Exit
+echo.
+echo  ===================================================
+echo.
 set "choice="
-set /p choice="Select an option (1-3): "
+set /p choice="  Select an option (1-4): "
 
 if "%choice%"=="1" goto :run_install
 if "%choice%"=="2" goto :run_start
-if "%choice%"=="3" exit /b 0
+if "%choice%"=="3" goto :run_verify
+if "%choice%"=="4" exit /b 0
+
+echo.
+echo  [!] Invalid option. Please enter 1, 2, 3, or 4.
+echo.
+pause
+goto :menu
+
+
+:: --------------------------------------------------------
+:: ROUTINE: VERIFY ENVIRONMENT
+:: --------------------------------------------------------
+:run_verify
+cls
+echo  ===================================================
+echo   [VERIFY] Environment Check
+echo  ===================================================
+echo.
+echo  -- Node.js version --
+node -v
+if %ERRORLEVEL% neq 0 (
+    echo  ERROR: node.exe failed to run. Check path: %NODE_BIN_DIR%
+    goto :error_exit
+)
+
+echo.
+echo  -- npm version --
+node "%NPM_CLI%" -v
+if %ERRORLEVEL% neq 0 (
+    echo  ERROR: npm-cli.js not found or failed. Check: %NPM_CLI%
+    goto :error_exit
+)
+
+echo.
+echo  -- NODE_OPTIONS --
+echo  %NODE_OPTIONS%
+echo.
+echo  All checks passed.
+echo.
+pause
 goto :menu
 
 
@@ -83,36 +140,43 @@ goto :menu
 :: --------------------------------------------------------
 :run_install
 cls
-echo ===================================================
-echo  [SETUP] Verifying Environment Components
-echo ===================================================
-node -v
-if %ERRORLEVEL% neq 0 goto :err_node_exec
-
-if not exist "%NPM_CLI%" goto :err_npm_missing
-
+echo  ===================================================
+echo   [SETUP] Installing Dependencies
+echo  ===================================================
 echo.
-echo Starting dependency installation...
+
+:: Verify node binary works
+node -v >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo  ERROR: Portable Node binary failed to execute.
+    goto :error_exit
+)
+
+:: Verify npm CLI exists
+if not exist "%NPM_CLI%" (
+    echo  ERROR: npm CLI not found at:
+    echo    %NPM_CLI%
+    echo.
+    echo  Ensure your Node 16 ZIP was fully extracted.
+    goto :error_exit
+)
+
+echo  Running: npm install --legacy-peer-deps
+echo.
 node "%NPM_CLI%" install --legacy-peer-deps
-if %ERRORLEVEL% neq 0 goto :err_install_failed
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo  ERROR: npm install failed with exit code %ERRORLEVEL%.
+    goto :error_exit
+)
 
 echo.
-echo SUCCESS: Dependencies installed cleanly.
+echo  ===================================================
+echo   SUCCESS: Dependencies installed successfully.
+echo  ===================================================
+echo.
 pause
 goto :menu
-
-:err_node_exec
-echo ERROR: Portable Node binary failed to execute.
-goto :error_exit
-
-:err_npm_missing
-echo ERROR: Expected npm CLI manager missing at: "%NPM_CLI%"
-goto :error_exit
-
-:err_install_failed
-echo.
-echo ERROR: 'npm install' encountered a critical failure.
-goto :error_exit
 
 
 :: --------------------------------------------------------
@@ -120,36 +184,42 @@ goto :error_exit
 :: --------------------------------------------------------
 :run_start
 cls
-echo ===================================================
-echo  [RUN] Executing Legacy Build Matrix
-echo ===================================================
-if not exist "node_modules\" goto :err_no_modules
-
-:: Trigger local project scripts
-call npm run m365-build
-if %ERRORLEVEL% neq 0 goto :err_run_failed
-pause
-goto :menu
-
-:err_no_modules
-echo WARNING: 'node_modules' folder is missing!
-echo Please run option [1] (First-Time Setup) before starting.
-pause
-goto :menu
-
-:err_run_failed
+echo  ===================================================
+echo   [RUN] Starting Application
+echo  ===================================================
 echo.
-echo ERROR: Application crashed or stopped with exit code %ERRORLEVEL%.
-goto :error_exit
+
+:: Check node_modules exists before attempting to run
+if not exist "%SCRIPT_DIR%node_modules\" (
+    echo  WARNING: 'node_modules' folder not found!
+    echo  Please run option [1] First-Time Setup first.
+    echo.
+    pause
+    goto :menu
+)
+
+echo  Running: npm run m365-build
+echo.
+call node "%NPM_CLI%" run m365-build
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo  ERROR: Application exited with code %ERRORLEVEL%.
+    goto :error_exit
+)
+
+echo.
+pause
+goto :menu
 
 
 :: --------------------------------------------------------
-:: ERROR EXIT HANDLER
+:: SHARED ERROR HANDLER
 :: --------------------------------------------------------
 :error_exit
 echo.
-echo ===================================================
-echo  FAILURE: Task halted due to errors.
-echo ===================================================
+echo  ===================================================
+echo   FAILURE: Task halted. See error above.
+echo  ===================================================
+echo.
 pause
 goto :menu
