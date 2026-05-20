@@ -32,7 +32,6 @@ for /d %%i in ("%SCRIPT_DIR%*") do (
     )
 )
 
-:: If loop finishes with no match, NODE_BIN_DIR stays empty
 goto :node_not_found
 
 :node_found
@@ -80,22 +79,24 @@ echo   npm CLI   : %NPM_CLI%
 echo  ---------------------------------------------------
 echo.
 echo   [1]  First-Time Setup    (npm install)
-echo   [2]  Start Application   (npm run m365-build)
-echo   [3]  Verify Environment  (node -v / npm -v)
-echo   [4]  Exit
+echo   [2]  Build Application   (npm run m365-build)
+echo   [3]  Start Local Server  (npm start)
+echo   [4]  Verify Environment  (node -v / npm -v)
+echo   [5]  Exit
 echo.
 echo  ===================================================
 echo.
 set "choice="
-set /p choice="  Select an option (1-4): "
+set /p choice="  Select an option (1-5): "
 
 if "%choice%"=="1" goto :run_install
-if "%choice%"=="2" goto :run_start
-if "%choice%"=="3" goto :run_verify
-if "%choice%"=="4" exit /b 0
+if "%choice%"=="2" goto :run_build
+if "%choice%"=="3" goto :run_start
+if "%choice%"=="4" goto :run_verify
+if "%choice%"=="5" exit /b 0
 
 echo.
-echo  [!] Invalid option. Please enter 1, 2, 3, or 4.
+echo  [!] Invalid option. Please enter 1, 2, 3, 4, or 5.
 echo.
 pause
 goto :menu
@@ -110,18 +111,39 @@ echo  ===================================================
 echo   [VERIFY] Environment Check
 echo  ===================================================
 echo.
-echo  -- Node.js version --
-node -v
+echo  -- Detected node.exe path --
+echo  %NODE_BIN_DIR%\node.exe
+echo.
+
+:: Test direct execution using full path
+echo  -- Node.js version (direct call) --
+"%NODE_BIN_DIR%\node.exe" -v
 if %ERRORLEVEL% neq 0 (
-    echo  ERROR: node.exe failed to run. Check path: %NODE_BIN_DIR%
+    echo.
+    echo  ERROR: node.exe exists but failed to run.
+    echo  Possible causes:
+    echo    1. Wrong architecture (x86 vs x64) for this machine
+    echo    2. Missing Visual C++ Redistributable
+    echo    3. Antivirus blocking execution
+    echo    4. Corrupted ZIP extraction
     goto :error_exit
 )
 
 echo.
-echo  -- npm version --
-node "%NPM_CLI%" -v
+echo  -- npm CLI path --
+echo  %NPM_CLI%
+echo.
+
+if not exist "%NPM_CLI%" (
+    echo  ERROR: npm-cli.js not found at above path.
+    echo  Ensure node_modules\npm\bin\ exists inside the portable folder.
+    goto :error_exit
+)
+
+echo  -- npm version (direct call) --
+"%NODE_BIN_DIR%\node.exe" "%NPM_CLI%" -v
 if %ERRORLEVEL% neq 0 (
-    echo  ERROR: npm-cli.js not found or failed. Check: %NPM_CLI%
+    echo  ERROR: npm-cli.js failed. Check: %NPM_CLI%
     goto :error_exit
 )
 
@@ -144,11 +166,28 @@ echo  ===================================================
 echo   [SETUP] Installing Dependencies
 echo  ===================================================
 echo.
+echo  Detected node.exe: %NODE_BIN_DIR%\node.exe
+echo.
 
-:: Verify node binary works
-node -v >nul 2>&1
+:: Use FULL PATH to node.exe to avoid any PATH resolution issues
+echo  -- Verifying node.exe (full path) --
+"%NODE_BIN_DIR%\node.exe" -v
 if %ERRORLEVEL% neq 0 (
-    echo  ERROR: Portable Node binary failed to execute.
+    echo.
+    echo  ERROR: node.exe exists at the path above but FAILED to execute.
+    echo.
+    echo  Common causes:
+    echo    [A] Architecture mismatch  - You may have a 32-bit node.exe on a 64-bit OS
+    echo        or vice versa. Download the correct version from:
+    echo        https://nodejs.org/dist/latest-v16.x/
+    echo.
+    echo    [B] Missing VC++ Runtime   - Install "Visual C++ Redistributable 2015-2022"
+    echo        from Microsoft and retry.
+    echo.
+    echo    [C] Antivirus blocking     - Temporarily disable AV or whitelist node.exe.
+    echo.
+    echo    [D] Corrupted extraction   - Re-extract the Node 16 ZIP and retry.
+    echo.
     goto :error_exit
 )
 
@@ -157,13 +196,14 @@ if not exist "%NPM_CLI%" (
     echo  ERROR: npm CLI not found at:
     echo    %NPM_CLI%
     echo.
-    echo  Ensure your Node 16 ZIP was fully extracted.
+    echo  Ensure your Node 16 ZIP was fully extracted including node_modules\npm\bin\
     goto :error_exit
 )
 
+echo.
 echo  Running: npm install --legacy-peer-deps
 echo.
-node "%NPM_CLI%" install --legacy-peer-deps
+"%NODE_BIN_DIR%\node.exe" "%NPM_CLI%" install --legacy-peer-deps
 if %ERRORLEVEL% neq 0 (
     echo.
     echo  ERROR: npm install failed with exit code %ERRORLEVEL%.
@@ -180,16 +220,15 @@ goto :menu
 
 
 :: --------------------------------------------------------
-:: ROUTINE: START APP
+:: ROUTINE: BUILD APP (npm run m365-build)
 :: --------------------------------------------------------
-:run_start
+:run_build
 cls
 echo  ===================================================
-echo   [RUN] Starting Application
+echo   [BUILD] Running m365 Build
 echo  ===================================================
 echo.
 
-:: Check node_modules exists before attempting to run
 if not exist "%SCRIPT_DIR%node_modules\" (
     echo  WARNING: 'node_modules' folder not found!
     echo  Please run option [1] First-Time Setup first.
@@ -200,10 +239,43 @@ if not exist "%SCRIPT_DIR%node_modules\" (
 
 echo  Running: npm run m365-build
 echo.
-call node "%NPM_CLI%" run m365-build
+"%NODE_BIN_DIR%\node.exe" "%NPM_CLI%" run m365-build
 if %ERRORLEVEL% neq 0 (
     echo.
-    echo  ERROR: Application exited with code %ERRORLEVEL%.
+    echo  ERROR: Build exited with code %ERRORLEVEL%.
+    goto :error_exit
+)
+
+echo.
+pause
+goto :menu
+
+
+:: --------------------------------------------------------
+:: ROUTINE: START LOCAL DEV SERVER (npm start)
+:: --------------------------------------------------------
+:run_start
+cls
+echo  ===================================================
+echo   [START] Launching Local Development Server
+echo  ===================================================
+echo.
+
+if not exist "%SCRIPT_DIR%node_modules\" (
+    echo  WARNING: 'node_modules' folder not found!
+    echo  Please run option [1] First-Time Setup first.
+    echo.
+    pause
+    goto :menu
+)
+
+echo  Running: npm start
+echo  Press Ctrl+C to stop the server and return to menu.
+echo.
+"%NODE_BIN_DIR%\node.exe" "%NPM_CLI%" start
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo  ERROR: Server exited with code %ERRORLEVEL%.
     goto :error_exit
 )
 
