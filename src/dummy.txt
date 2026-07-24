@@ -1,39 +1,51 @@
 import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
 import * as microsoftTeams from "@microsoft/teams-js";
-// Import your initialization helper from index.ts
-import { ensureTeamsJSInitialized } from "../../app/teams"; 
+import { ensureTeamsJSInitialized } from "../../app/teams"; // Adjust this relative path to your index.ts
 
-// Helper to resolve Base URLs
+let _isProductionServer: boolean = false;
+
+export const isProductionServer = (isProd: boolean) => {
+  _isProductionServer = isProd;
+};
+
+export const isAuthRequired = () => {
+  return _isProductionServer ? true : false;
+};
+
+// Returns both Primary (Azure) and Fallback (m365services) base URLs
 export const getBaseURLs = () => {
   const primaryUrl = _isProductionServer
-    ? "https://abc.com/"
-    : "https://xyz.com/";
+    ? "https://abc/"
+    : "https://xyz/";
 
-  const fallbackUrl = "https://xxx.com/";
+  const fallbackUrl = "https://xxx/";
 
   return { primaryUrl, fallbackUrl };
 };
 
 export class AxiosJWTDecorator {
 
-  // Helper method to execute requests with Primary -> Fallback logic
+  /**
+   * Helper method to execute HTTP calls with Primary -> Fallback retry logic
+   */
   private async executeWithFallback<R>(
     method: "get" | "post" | "put" | "delete",
-    path: string,
+    endpoint: string,
     data?: any,
     config?: AxiosRequestConfig
   ): Promise<R> {
     const isDirectCall = config?.data?.isDirectCall;
 
+    // Direct call handling (no base URL attachment)
     if (isDirectCall) {
-      return await axios[method](path, data, config) as unknown as R;
+      return await axios[method](endpoint, data, config) as unknown as R;
     }
 
     const { primaryUrl, fallbackUrl } = getBaseURLs();
-    const primaryFullUrl = primaryUrl + path;
-    const fallbackFullUrl = fallbackUrl + path;
+    const primaryFullUrl = primaryUrl + endpoint;
+    const fallbackFullUrl = fallbackUrl + endpoint;
 
-    // Step 1: Try Primary (Azure)
+    // Step 1: Attempt Primary URL (PRD / DEV Azure)
     try {
       if (method === "get" || method === "delete") {
         return await axios[method](primaryFullUrl, config) as unknown as R;
@@ -41,9 +53,9 @@ export class AxiosJWTDecorator {
         return await axios[method](primaryFullUrl, data, config) as unknown as R;
       }
     } catch (primaryError) {
-      console.warn(`Primary API failed (${primaryFullUrl}). Trying fallback: ${fallbackFullUrl}`, primaryError);
+      console.warn(`Primary endpoint failed (${primaryFullUrl}). Retrying with fallback (${fallbackFullUrl})...`, primaryError);
 
-      // Step 2: Fallback (m365services)
+      // Step 2: Fallback to m365services URL
       try {
         if (method === "get" || method === "delete") {
           return await axios[method](fallbackFullUrl, config) as unknown as R;
@@ -57,11 +69,12 @@ export class AxiosJWTDecorator {
     }
   }
 
-  // --- HTTP METHODS ---
+  // --- HTTP PUBLIC METHODS ---
 
   public async get<T = any, R = AxiosResponse<T>>(
     url: string,
-    config?: AxiosRequestConfig
+    config?: AxiosRequestConfig,
+    needAuthorizationHeaderTMP: boolean = true
   ): Promise<R> {
     config = await this.prepareConfig(config);
     return this.executeWithFallback<R>("get", url, undefined, config);
@@ -70,7 +83,8 @@ export class AxiosJWTDecorator {
   public async post<T = any, R = AxiosResponse<T>>(
     url: string,
     data?: any,
-    config?: AxiosRequestConfig
+    config?: AxiosRequestConfig,
+    needAuthorizationHeaderTMP: boolean = true
   ): Promise<R> {
     config = await this.prepareConfig(config);
     return this.executeWithFallback<R>("post", url, data, config);
@@ -79,7 +93,8 @@ export class AxiosJWTDecorator {
   public async put<T = any, R = AxiosResponse<T>>(
     url: string,
     data?: any,
-    config?: AxiosRequestConfig
+    config?: AxiosRequestConfig,
+    needAuthorizationHeaderTMP: boolean = true
   ): Promise<R> {
     config = await this.prepareConfig(config);
     return this.executeWithFallback<R>("put", url, data, config);
@@ -91,7 +106,7 @@ export class AxiosJWTDecorator {
     config?: AxiosRequestConfig
   ): Promise<R> {
     config = await this.prepareConfig(config);
-    
+
     if (data) {
       config = config || {};
       config.headers = config.headers || {};
@@ -114,24 +129,24 @@ export class AxiosJWTDecorator {
     return conf;
   }
 
-  // FIXED for Teams SDK v2.x & Mobile Bridge
+  // UPDATED FOR TEAMS SDK 2.x & MOBILE COMPATIBILITY
   private async setupAuthorizationHeader(config: AxiosRequestConfig): Promise<AxiosRequestConfig> {
     try {
-      // Ensure SDK initialization before asking for tokens on mobile
+      // Safely await Teams SDK init without re-initializing manually
       await ensureTeamsJSInitialized();
 
       if (microsoftTeams.authentication.isSupported()) {
-        // Correct v2 SDK async promise usage
+        // Teams JS 2.x Promise-based getAuthToken
         const token = await microsoftTeams.authentication.getAuthToken({
           resources: ["https://graph.microsoft.com"]
         });
 
+        config = config || {};
         config.headers = config.headers || {};
         config.headers["Authorization"] = `Bearer ${token}`;
       }
     } catch (error) {
       console.error("Error from getAuthToken:", error);
-      // Avoid hard window redirects on mobile if possible, or handle gracefully
       window.location.href = "/signin";
     }
 
@@ -139,10 +154,10 @@ export class AxiosJWTDecorator {
   }
 
   private handleError(error: any): void {
-    console.error("Axios-Error:", error);
+    console.error("Axios-Error", error);
 
-    if (error?.response) {
-      const errorStatus = error.response.status;
+    if (error?.hasOwnProperty("response") || error?.response) {
+      const errorStatus = error.response?.status;
       if (errorStatus === 403 || errorStatus === 401) {
         window.location.href = "/errorpage";
       } else {
