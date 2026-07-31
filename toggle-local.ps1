@@ -4,7 +4,6 @@ param (
     [string]$Mode
 )
 
-# Relative file paths (adjust subfolder paths if your controllers live elsewhere, e.g., "Controllers/AssetsController.cs")
 $programCs = "Program.cs"
 $assetsController = "AssetsController.cs"
 $baseController = "BaseController.cs"
@@ -14,13 +13,13 @@ $searchController = "SearchController.cs"
 if ($Mode -eq "enable") {
     Write-Host "Applying Local Development Changes..." -ForegroundColor Green
 
-    # 1. Update Program.cs (Add CORS service and middleware)
+    # 1. Update Program.cs with tagged CORS block
     if (Test-Path $programCs) {
         $content = Get-Content $programCs -Raw
         
         if ($content -notlike "*AllowReactApp*") {
-            # Insert CORS service before AddControllers()
             $corsService = @"
+// #LOCAL_DEV_START
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policy =>
@@ -31,19 +30,18 @@ builder.Services.AddCors(options =>
               .AllowCredentials();
     });
 });
+// #LOCAL_DEV_END
 builder.Services.AddControllers()
 "@
             $content = $content -replace 'builder\.Services\.AddControllers\(\)', $corsService
-            
-            # Insert CORS middleware before UseSwagger()
-            $content = $content -replace 'app\.UseSwagger\(\);', "app.UseCors(""AllowReactApp"");`r`napp.UseSwagger();"
+            $content = $content -replace 'app\.UseSwagger\(\);', "// #LOCAL_DEV_START`r`napp.UseCors(""AllowReactApp"");`r`n// #LOCAL_DEV_END`r`napp.UseSwagger();"
             
             Set-Content $programCs $content
             Write-Host "Updated Program.cs" -ForegroundColor Gray
         }
     }
 
-    # 2. Comment out [Authorize] attributes
+    # 2. Comment [Authorize] in controllers
     foreach ($file in @($assetsController, $configController, $searchController)) {
         if (Test-Path $file) {
             (Get-Content $file) -replace '^\s*(\[Authorize\])', '// $1' | Set-Content $file
@@ -51,7 +49,7 @@ builder.Services.AddControllers()
         }
     }
 
-    # 3. Uncomment UserID return line in BaseController.cs
+    # 3. Uncomment UserID in BaseController.cs
     if (Test-Path $baseController) {
         (Get-Content $baseController) -replace '//\s*(return this\.spoOptions\.Value\.UserID;)', '$1' | Set-Content $baseController
         Write-Host "Uncommented UserID line in $baseController" -ForegroundColor Gray
@@ -63,22 +61,18 @@ builder.Services.AddControllers()
 elseif ($Mode -eq "disable") {
     Write-Host "Reverting Changes for Production / Server..." -ForegroundColor Yellow
 
-    # 1. Revert Program.cs (Remove CORS configuration)
+    # 1. Revert Program.cs (Precisely strip everything between tags)
     if (Test-Path $programCs) {
         $content = Get-Content $programCs -Raw
         
-        # Remove CORS Service block
-        $corsBlockRegex = '(?s)builder\.Services\.AddCors\(options =>.*?\n\}\);\r?\n'
-        $content = $content -replace $corsBlockRegex, ''
-        
-        # Remove app.UseCors call
-        $content = $content -replace 'app\.UseCors\("AllowReactApp"\);\r?\n', ''
+        # Remove everything between // #LOCAL_DEV_START and // #LOCAL_DEV_END
+        $content = $content -replace '(?s)// #LOCAL_DEV_START.*?// #LOCAL_DEV_END\r?\n?', ''
         
         Set-Content $programCs $content
         Write-Host "Reverted Program.cs" -ForegroundColor Gray
     }
 
-    # 2. Uncomment [Authorize] attributes
+    # 2. Uncomment [Authorize] in controllers
     foreach ($file in @($assetsController, $configController, $searchController)) {
         if (Test-Path $file) {
             (Get-Content $file) -replace '//\s*(\[Authorize\])', '$1' | Set-Content $file
@@ -86,7 +80,7 @@ elseif ($Mode -eq "disable") {
         }
     }
 
-    # 3. Re-comment UserID line in BaseController.cs
+    # 3. Re-comment UserID in BaseController.cs
     if (Test-Path $baseController) {
         (Get-Content $baseController) -replace '^\s*(return this\.spoOptions\.Value\.UserID;)', '// $1' | Set-Content $baseController
         Write-Host "Re-commented UserID line in $baseController" -ForegroundColor Gray
