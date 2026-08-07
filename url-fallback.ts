@@ -3,37 +3,43 @@ import * as microsoftTeams from "@microsoft/teams-js";
 import { PubSubTopic } from "../components/CommonToast/topics";
 import { PubSubMessenger } from "../third-party";
 
+// Define your secondary/backup URL here
+const SECONDARY_URL = "https://your-secondary-fallback-url.com/api";
+
 export class AxiosJWTDecorator {
 
-  // Executes requests sequentially and short-circuits on the first success
+  /**
+   * Tries primary URL first. If it fails, falls back to SECONDARY_URL.
+   * If SECONDARY_URL also fails, invokes handleError and throws error.
+   */
   private async executeWithFallback<R>(
-    urls: string | string[],
+    primaryUrl: string,
     requestFn: (targetUrl: string) => Promise<R>
   ): Promise<R> {
-    // Normalize input so it's always an array of strings
-    const urlList = Array.isArray(urls) ? urls : [urls];
+    const urlsToTry = [primaryUrl, SECONDARY_URL];
 
-    for (let i = 0; i < urlList.length; i++) {
-      const currentUrl = urlList[i];
-      const isLast = i === urlList.length - 1;
+    for (let i = 0; i < urlsToTry.length; i++) {
+      const currentUrl = urlsToTry[i];
+      const isLast = i === urlsToTry.length - 1;
 
       try {
-        // Passes a single string URL to requestFn, avoiding "url1,url2" concatenation
+        // As soon as this succeeds, return result immediately and exit
         return await requestFn(currentUrl);
       } catch (error) {
         if (isLast) {
+          // Both primary and secondary failed -> handle error and throw
           this.handleError(error);
           throw error;
         }
-        console.warn(`Request to ${currentUrl} failed. Retrying with next fallback URL...`);
+        console.warn(`Primary request to ${currentUrl} failed. Retrying with fallback: ${SECONDARY_URL}`);
       }
     }
 
-    throw new Error("All fallback URLs failed.");
+    throw new Error("All URL attempts failed");
   }
 
   public async get<T = any, R = AxiosResponse<T>>(
-    url: string | string[],
+    url: string,
     config?: AxiosRequestConfig,
     needAuthorizationHeader: boolean = true
   ): Promise<R> {
@@ -46,7 +52,7 @@ export class AxiosJWTDecorator {
   }
 
   public async delete<T = any, R = AxiosResponse<T>>(
-    url: string | string[],
+    url: string,
     data?: any,
     config?: AxiosRequestConfig
   ): Promise<R> {
@@ -62,7 +68,7 @@ export class AxiosJWTDecorator {
   }
 
   public async post<T = any, R = AxiosResponse<T>>(
-    url: string | string[],
+    url: string,
     data?: any,
     config?: AxiosRequestConfig,
     needAuthorizationHeader: boolean = true
@@ -76,7 +82,7 @@ export class AxiosJWTDecorator {
   }
 
   public async put<T = any, R = AxiosResponse<T>>(
-    url: string | string[],
+    url: string,
     data?: any,
     config?: AxiosRequestConfig,
     needAuthorizationHeader: boolean = true
