@@ -13,30 +13,33 @@ export class AxiosJWTDecorator {
    * If SECONDARY_URL also fails, invokes handleError and throws error.
    */
   private async executeWithFallback<R>(
-    primaryUrl: string,
-    requestFn: (targetUrl: string) => Promise<R>
-  ): Promise<R> {
-    const urlsToTry = [primaryUrl, SECONDARY_URL];
+  primaryUrl: string,
+  requestFn: (targetUrl: string) => Promise<R>
+): Promise<R> {
+  const urlsToTry = [primaryUrl, SECONDARY_URL];
+  const errors: unknown[] = [];
 
-    for (let i = 0; i < urlsToTry.length; i++) {
-      const currentUrl = urlsToTry[i];
-      const isLast = i === urlsToTry.length - 1;
+  for (const [index, currentUrl] of urlsToTry.entries()) {
+    try {
+      return await requestFn(currentUrl);
+    } catch (error) {
+      errors.push(error);
+      const isLast = index === urlsToTry.length - 1;
 
-      try {
-        // As soon as this succeeds, return result immediately and exit
-        return await requestFn(currentUrl);
-      } catch (error) {
-        if (isLast) {
-          // Both primary and secondary failed -> handle error and throw
-          this.handleError(error);
-          throw error;
-        }
-        console.warn(`Primary request to ${currentUrl} failed. Retrying with fallback: ${SECONDARY_URL}`);
+      if (!isLast) {
+        const nextUrl = urlsToTry[index + 1];
+        console.warn(`Request to ${currentUrl} failed. Retrying with fallback: ${nextUrl}`, error);
+      } else {
+        // Both primary and secondary failed
+        this.handleError(error);
+        throw error; // Or throw an AggregateError(errors, "All URL attempts failed")
       }
     }
-
-    throw new Error("All URL attempts failed");
   }
+
+  // TypeScript safeguard: unreachable code
+  throw new Error("All URL attempts failed");
+}
 
   public async get<T = any, R = AxiosResponse<T>>(
     url: string,
