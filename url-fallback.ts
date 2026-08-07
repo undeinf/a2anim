@@ -5,11 +5,12 @@ import { PubSubMessenger } from "../third-party";
 
 export class AxiosJWTDecorator {
 
-  // Helper method to execute request with fallback logic
+  // Executes requests sequentially and short-circuits on the first success
   private async executeWithFallback<R>(
     urls: string | string[],
-    requestFn: (url: string) => Promise<R>
+    requestFn: (targetUrl: string) => Promise<R>
   ): Promise<R> {
+    // Normalize input so it's always an array of strings
     const urlList = Array.isArray(urls) ? urls : [urls];
 
     for (let i = 0; i < urlList.length; i++) {
@@ -17,20 +18,18 @@ export class AxiosJWTDecorator {
       const isLast = i === urlList.length - 1;
 
       try {
-        // Return immediately on success without checking remaining URLs
+        // Passes a single string URL to requestFn, avoiding "url1,url2" concatenation
         return await requestFn(currentUrl);
       } catch (error) {
-        // If it's the last URL and it fails, publish error and throw
         if (isLast) {
           this.handleError(error);
           throw error;
         }
-        // Log/handle fallback attempt if needed, then move to next URL
-        console.warn(`Request failed for URL: ${currentUrl}. Trying next fallback...`);
+        console.warn(`Request to ${currentUrl} failed. Retrying with next fallback URL...`);
       }
     }
 
-    throw new Error("All URL attempts failed");
+    throw new Error("All fallback URLs failed.");
   }
 
   public async get<T = any, R = AxiosResponse<T>>(
@@ -41,7 +40,9 @@ export class AxiosJWTDecorator {
     if (needAuthorizationHeader) {
       config = await this.setupAuthorizationHeader(config);
     }
-    return this.executeWithFallback(url, (targetUrl) => axios.get<T, R>(targetUrl, config));
+    return this.executeWithFallback(url, (targetUrl) =>
+      axios.get<T, R>(targetUrl, config)
+    );
   }
 
   public async delete<T = any, R = AxiosResponse<T>>(
@@ -55,7 +56,9 @@ export class AxiosJWTDecorator {
       config.headers["Content-Type"] = "application/json; charset=utf-8";
       config.data = data;
     }
-    return this.executeWithFallback(url, (targetUrl) => axios.delete<T, R>(targetUrl, config));
+    return this.executeWithFallback(url, (targetUrl) =>
+      axios.delete<T, R>(targetUrl, config)
+    );
   }
 
   public async post<T = any, R = AxiosResponse<T>>(
@@ -67,7 +70,9 @@ export class AxiosJWTDecorator {
     if (needAuthorizationHeader) {
       config = await this.setupAuthorizationHeader(config);
     }
-    return this.executeWithFallback(url, (targetUrl) => axios.post<T, R>(targetUrl, data, config));
+    return this.executeWithFallback(url, (targetUrl) =>
+      axios.post<T, R>(targetUrl, data, config)
+    );
   }
 
   public async put<T = any, R = AxiosResponse<T>>(
@@ -79,7 +84,9 @@ export class AxiosJWTDecorator {
     if (needAuthorizationHeader) {
       config = await this.setupAuthorizationHeader(config);
     }
-    return this.executeWithFallback(url, (targetUrl) => axios.put<T, R>(targetUrl, data, config));
+    return this.executeWithFallback(url, (targetUrl) =>
+      axios.put<T, R>(targetUrl, data, config)
+    );
   }
 
   private handleError(error: any): void {
