@@ -1,0 +1,209 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Divider, Field, Radio, RadioGroup, Switch, Text, tokens } from '@fluentui/react-components';
+import { ReviewRequestSolidIcon, UpdateRestoreIcon } from '@fluentui/react-icons-md12';
+import { CommonButton, BasicDialog, TitleContainer } from '@m365-monorepo/ui';
+import { ADMIN_DISABLED } from '@m365-monorepo/constants';
+import { 
+  toastService, 
+  useGetOneDriveDetailQuery, 
+  useUpdateOneDriveGuestExpirationMutation, 
+  useUpdateOneDriveInformationMutation 
+} from '../../../redux';
+import { 
+  IOneDriveGuestExpiration, 
+  IOneDriveUpdateDetail, 
+  OneDriveUserInfo 
+} from '@m365-monorepo/types';
+import { OnedriveConsent } from './onedrive-consent';
+
+type DialogMode = 'none' | 'recertification' | 'consentReadOnly' | 'entryScreen';
+
+interface Props {
+  record?: OneDriveUserInfo;
+  onMessage?: (message: string) => void;
+}
+
+const GUEST_EXPIRATION_UPDATE_SUCCESS_MSG = 'External sharing settings are successfully saved.';
+
+export const OneDriveUpdate: React.FC<Props> = ({ record, onMessage }) => {
+  const { colorBrandBackground } = tokens;
+
+  // RTK Query hooks
+  const { refetch, isLoading: isOnedriveInfoLoading } = useGetOneDriveDetailQuery(null);
+  const [
+    updateGuestExpiration, 
+    { isSuccess: isGuestExpSuccess, isLoading: isGuestExpLoading }
+  ] = useUpdateOneDriveGuestExpirationMutation();
+
+  const [
+    updateDriveInformation, 
+    { isSuccess: isDriveInfoSuccess, isLoading: isDriveInfoLoading }
+  ] = useUpdateOneDriveInformationMutation();
+
+  const isMutating = isGuestExpLoading || isDriveInfoLoading || isOnedriveInfoLoading;
+
+  // Form states
+  const [externalSharing, setExternalSharing] = useState<boolean>(false);
+  const [isConsentAccepted, setIsConsentAccepted] = useState<boolean>(true);
+  const [userExpirationInDays, setUserExpirationInDays] = useState<number>(30);
+  const [activeDialog, setActiveDialog] = useState<DialogMode>('none');
+
+  // Derive disabled state directly
+  const isExternalSharingDisabled = useMemo(() => {
+    return record?.adminRestricted?.toLowerCase() === ADMIN_DISABLED.toLowerCase();
+  }, [record?.adminRestricted]);
+
+  // Sync state when `record` arrives
+  useEffect(() => {
+    if (!record) return;
+    setExternalSharing(Boolean(record.sharingCapability));
+    setIsConsentAccepted(Boolean(record.sharingCapability));
+    if (record.externalUserExpirationInDays) {
+      setUserExpirationInDays(record.externalUserExpirationInDays);
+    }
+  }, [record]);
+
+  // Success handling
+  useEffect(() => {
+    if (isDriveInfoSuccess || isGuestExpSuccess) {
+      toastService.info(GUEST_EXPIRATION_UPDATE_SUCCESS_MSG);
+      onMessage?.(GUEST_EXPIRATION_UPDATE_SUCCESS_MSG);
+      refetch();
+    }
+  }, [isDriveInfoSuccess, isGuestExpSuccess, onMessage, refetch]);
+
+  // Update handlers
+  const handleUpdate = useCallback((businessJustification?: string) => {
+    if (!record) return;
+
+    // 1. Recertification or external sharing toggle change
+    const isRecertChanged = record.recertification !== true;
+    const isSharingChanged = externalSharing !== record.sharingCapability;
+
+    if ((isRecertChanged && businessJustification) || isSharingChanged) {
+      const payload: IOneDriveUpdateDetail = {
+        sharingCapability: externalSharing ? '1' : '0',
+        businessJustification: businessJustification || record.businessJustification,
+        siteID: record.siteID,
+        webUrl: record.url,
+      };
+      updateDriveInformation(payload);
+      return;
+    }
+
+    // 2. Expiration days changed
+    const isExpDaysChanged = 
+      userExpirationInDays && 
+      userExpirationInDays !== record.externalUserExpirationInDays;
+
+    if (isExpDaysChanged) {
+      const daysPayload: IOneDriveGuestExpiration = {
+        siteID: record.siteID,
+        webUrl: record.url,
+        externalUserExpirationInDays: userExpirationInDays.toString(),
+      };
+      updateGuestExpiration(daysPayload);
+    }
+  }, [record, externalSharing, userExpirationInDays, updateDriveInformation, updateGuestExpiration]);
+
+  const handleSwitchChange = (_: unknown, data: { checked: boolean }) => {
+    if (isExternalSharingDisabled) return;
+    setExternalSharing(data.checked);
+    if (!isConsentAccepted) {
+      setActiveDialog('entryScreen');
+    }
+  };
+
+  return (
+    <div className="p-4 w-full">
+      <TitleContainer title="External Sharing">
+        <div className="flex w-full flex-col pb-8">
+          <Field className="flex">
+            <Switch
+              label="Enable/Disable External Sharing"
+              checked={externalSharing}
+              disabled={isExternalSharingDisabled}
+              onChange={handleSwitchChange}
+            />
+            {isExternalSharingDisabled && (
+              <span className="text-red-600 pb-5 pl-5">
+                The control is disabled for you. Please contact your Operational Manager for help.
+              </span>
+            )}
+          </Field>
+
+          <Divider />
+
+          {externalSharing && (
+            <div>
+              <Text className="py-6">
+                Share links created for external contacts are set to expire after 30 days before you
+                would need to extend them; you can choose to update the default period for external share links to 90 days.
+              </Text>
+
+              <Field>
+                <RadioGroup
+                  value={userExpirationInDays.toString()}
+                  onChange={(_, data) => setUserExpirationInDays(parseInt(data.value, 10))}
+                  className="one-drive-update-rgroup flex flex-row max-[540px]:flex-col"
+                >
+                  <Radio value="30" className="pr-8 !text-black" label="30 (default)" />
+                  <Radio value="90" className="!text-black" label="90 (extended)" />
+                </RadioGroup>
+              </Field>
+
+              <div className="pt-6 pb-4">
+                <CommonButton
+                  icon={<ReviewRequestSolidIcon className="text-2xl" />}
+                  appearance="primary"
+                  onClick={() => setActiveDialog('consentReadOnly')}
+                >
+                  Review: External Sharing Terms & Conditions
+                </CommonButton>
+              </div>
+
+              <Divider />
+            </div>
+          )}
+        </div>
+
+        <div className="w-full flex justify-end py-4">
+          <CommonButton
+            appearance="primary"
+            disabled={isExternalSharingDisabled || isMutating}
+            icon={<UpdateRestoreIcon className="text-2xl" />}
+            onClick={() => handleUpdate(record?.businessJustification)}
+          >
+            {isMutating ? 'Updating...' : 'Update'}
+          </CommonButton>
+        </div>
+      </TitleContainer>
+
+      {/* Consolidated Single Dialog */}
+      <BasicDialog
+        open={activeDialog !== 'none'}
+        bgColor={colorBrandBackground}
+        surfaceClassName="!max-w-4/5 !max-h-[90vh]"
+        message={
+          <OnedriveConsent
+            isReadOnly={activeDialog === 'consentReadOnly'}
+            businessJustification={record?.businessJustification || ''}
+          />
+        }
+        onAccept={(val) => {
+          if (activeDialog === 'entryScreen') {
+            setIsConsentAccepted(true);
+          }
+          setActiveDialog('none');
+          handleUpdate(val);
+        }}
+        onClose={() => {
+          if (activeDialog === 'entryScreen') {
+            setExternalSharing(false);
+          }
+          setActiveDialog('none');
+        }}
+      />
+    </div>
+  );
+};
