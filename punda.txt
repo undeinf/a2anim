@@ -1,64 +1,12 @@
-import React, { lazy, Suspense } from 'react';
-import { Route } from 'react-router-dom';
-
-const M365ManagementTools = lazy(
-  () => import('../modules/m365-management-tools/m365-management-tools.module')
-);
-
-// FIX 1: Point to the actual collapsible panels component
-const M365ToolsCollapsiblePanels = lazy(
-  () =>
-    import(
-      '../modules/m365-management-tools/components/m365Tools-collapsible-panels.component'
-    )
-);
-
-// Route definition:
-<Route
-  path={MenuKey.M365_Management_Tools}
-  element={
-    <Suspense fallback={<div>Loading...</div>}>
-      <M365ManagementTools />
-    </Suspense>
-  }
->
-  {/* FIX 2: Base route for /m365Tools (all tiles displayed, none active) */}
-  <Route
-    index
-    element={
-      <Suspense fallback={<div>Loading...</div>}>
-        <M365ToolsCollapsiblePanels />
-      </Suspense>
-    }
-  />
-
-  {/* Child route for /m365Tools/:toolName (e.g. /m365Tools/guest_user_deletion) */}
-  <Route
-    path=":toolName"
-    element={
-      <Suspense fallback={<div>Loading...</div>}>
-        <M365ToolsCollapsiblePanels />
-      </Suspense>
-    }
-  />
-</Route>
-
-
 m365-management-tools.module.tsx
 
 
-
 import React from 'react';
-import { useOutlet } from 'react-router-dom';
 import { M365ToolsCollapsiblePanels } from './components/m365Tools-collapsible-panels.component';
 import { ModuleHeader } from '../../common-components';
 import { WindowDevToolsFilled } from '@fluentui/react-icons';
 
-export { M365ToolsCollapsiblePanels } from './components/m365Tools-collapsible-panels.component';
-
 export const M365ManagementTools: React.FC = () => {
-  const outlet = useOutlet();
-
   return (
     <div className="m365-tools-container">
       <ModuleHeader
@@ -75,24 +23,88 @@ export const M365ManagementTools: React.FC = () => {
         showSearch={false}
       />
       <hr />
-      {/* Renders child route if matched; falls back to collapsible panels if not */}
-      {outlet || <M365ToolsCollapsiblePanels />}
+      <M365ToolsCollapsiblePanels />
     </div>
   );
 };
 
 export default M365ManagementTools;
 
-
-
 m365Tools-collapsible-panels.component.tsx
 
+import React, { useEffect, useState, useMemo, lazy, Suspense, useCallback } from 'react';
+import './m365Tools-collapsible-panels.component.style.css';
+import { getEnumValueFromLabel, M365ToolsGroupLabels } from '../types';
+import { useGetM365ToolsPermissionsQuery } from '../../../redux';
+import { Spinner, Text } from '@fluentui/react-components';
+import {
+  GuestUserDeletetionToolModule,
+  OneDriveExternalSharingToolModule,
+  SPOAppCatalogModule,
+  SPOSiteExternalSharingComponent,
+  SPOSiteManagementLockUnlockComponent,
+  SPOSiteProvisioningComponent,
+  SPOSiteTempAccessComponent,
+} from '../sub-modules';
 
-  // Read :toolName child route parameter
+const ISCMMRProfilesUpload = lazy(
+  () => import('../../isc-movers-membership-recovery/isc-movers-membership-recovery.module')
+);
+
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { M365ToolsGroupNames } from '@m365-monorepo/types';
+import { SPOBulkSiteManagementLockUnlockComponent } from '../sub-modules/spo-bulk-site-mgnt-lock-unlock';
+import { OrphanOneDriveComponent } from '../sub-modules/orphan-one-drive';
+import { M365ToolsLabelComponent } from './m365Tools-label/m365Tools-label.component';
+
+const componentsMap: Partial<Record<M365ToolsGroupNames, React.ReactNode>> = {
+  [M365ToolsGroupNames.GUEST_USER_DELETION]: <GuestUserDeletetionToolModule />,
+  [M365ToolsGroupNames.ONEDRIVE_EXTERNAL_SHARING]: <OneDriveExternalSharingToolModule />,
+  [M365ToolsGroupNames.ENABLE_APP_CATALOG]: <SPOAppCatalogModule />,
+  [M365ToolsGroupNames.SPO_SITE_LOCK_UNLOCK]: <SPOSiteManagementLockUnlockComponent />,
+  [M365ToolsGroupNames.SPO_BULK_SITE_LOCK_UNLOCK]: <SPOBulkSiteManagementLockUnlockComponent />,
+  [M365ToolsGroupNames.ORPHAN_ONEDRIVE_ACCESS]: <OrphanOneDriveComponent />,
+  [M365ToolsGroupNames.SPO_SITE_TEMP_ACCESS]: <SPOSiteTempAccessComponent />,
+  [M365ToolsGroupNames.SITE_PROVISION_MOD]: <SPOSiteProvisioningComponent />,
+  [M365ToolsGroupNames.ENABLE_EXTERNAL_SHARE]: <SPOSiteExternalSharingComponent />,
+  [M365ToolsGroupNames.SPO_ISC_MOVERS]: <ISCMMRProfilesUpload isRITMRequired={true} />,
+};
+
+export const M365ToolsCollapsiblePanels: React.FC<{}> = () => {
+  const [activeTile, setActiveTile] = useState<M365ToolsGroupNames | null | ''>(null);
+
+  const { data, refetch, isLoading } = useGetM365ToolsPermissionsQuery(null);
+  const modifiedData = useMemo(() => data?.modified || [], [data]);
+
   const { toolName } = useParams<{ toolName?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
 
-  // Synchronize active tile with the child route
+  // Dynamically determine current base path (e.g. /module/m365-management-tools)
+  const basePath = useMemo(() => {
+    if (toolName && location.pathname.endsWith(`/${toolName}`)) {
+      return location.pathname.slice(0, -(toolName.length + 1));
+    }
+    return location.pathname.replace(/\/$/, '');
+  }, [location.pathname, toolName]);
+
+  const resolveGroupName = useCallback((param: string): M365ToolsGroupNames | null => {
+    if (componentsMap[param as M365ToolsGroupNames]) {
+      return param as M365ToolsGroupNames;
+    }
+    const matchedKey = (Object.keys(componentsMap) as M365ToolsGroupNames[]).find(
+      (k) => k.toLowerCase() === param.toLowerCase()
+    );
+    if (matchedKey) return matchedKey;
+
+    const fromLabel = getEnumValueFromLabel(param) as M365ToolsGroupNames;
+    if (fromLabel && componentsMap[fromLabel]) {
+      return fromLabel;
+    }
+    return null;
+  }, []);
+
+  // Deep linking: auto-expand tile if :toolName is present in URL
   useEffect(() => {
     if (toolName) {
       const resolved = resolveGroupName(toolName);
@@ -102,20 +114,112 @@ m365Tools-collapsible-panels.component.tsx
     } else {
       setActiveTile(null);
     }
-  }, [toolName]);
+  }, [toolName, resolveGroupName]);
 
-  // Click handler that navigates child routes
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
+
+  // Original accordion toggle in-place + dynamic route update
   const toggleTile = (id: M365ToolsGroupNames) => {
     if (!componentsMap[id]) return;
 
     if (activeTile === id) {
-      // Collapse tile: navigate back to base /m365Tools
-      navigate('/m365Tools');
+      // Collapse tile in-place and revert URL to base path
       setActiveTile(null);
+      navigate(basePath, { replace: false });
     } else {
-      // Expand tile: navigate to child route /m365Tools/:toolName
-      navigate(`/m365Tools/${id}`);
+      // Expand tile in-place and update URL with tool name
       setActiveTile(id);
+      navigate(`${basePath}/${id}`, { replace: false });
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="pt-4 flex w-full justify-start items-center">
+        <Spinner />
+        &nbsp;&nbsp;Loading...
+      </div>
+    );
+  }
+
+  return (
+    <div className="collapsible-panel grid grid-cols-auto-fit-200-1fr gap-4 p-5">
+      {(modifiedData || [])
+        .filter((tile) => tile.validUser)
+        .map((tile, index) => {
+          const name: M365ToolsGroupNames = getEnumValueFromLabel(
+            tile.groupName
+          ) as M365ToolsGroupNames;
+          const ComponentToRender = componentsMap[name];
+
+          return (
+            <React.Fragment key={index}>
+              <div
+                className={`tile h-32 border border-gray-300 rounded-lg bg-gray-50 dark:bg-black/30 flex justify-center items-center text-center cursor-pointer transition-colors duration-300 ease-in-out hover:bg-gray-200 hover:dark:bg-black/30 ${
+                  activeTile === name
+                    ? 'tile-active bg-cyan-50 border !border-blue-500 dark:bg-black/25 shadow-md'
+                    : ''
+                }`}
+                onClick={() => toggleTile(name)}
+              >
+                <div className="tile-header font-bold flex items-center ">
+                  <Text className="pr-2">
+                    <M365ToolsLabelComponent label={tile.groupName} />
+                  </Text>
+                  <span
+                    className={`arrow border-l-transparent border-r-transparent ${
+                      activeTile === name
+                        ? 'down border-t-[6px] dark:border-t-white border-t-black rotate-0'
+                        : 'right border-t-[6px] dark:border-t-white border-t-black -rotate-90'
+                    }`}
+                  ></span>
+                </div>
+              </div>
+
+              {/* In-place collapsible expansion below the tile */}
+              {activeTile === name && ComponentToRender && (
+                <div
+                  className="full-width-component bg-gray-100 dark:bg-black/30 p-5 border border-gray-300 shadow-md rounded-lg mt-4"
+                  style={{ gridColumn: '1 / -1' }}
+                >
+                  <div className="px-1 py-3 mb-5 bg-[var(--colorBrandBackground)] text-white font-bold text-[20px] flex justify-center rounded-lg">
+                    <M365ToolsLabelComponent
+                      label={M365ToolsGroupLabels[activeTile] as string}
+                    />
+                  </div>
+                  <Suspense
+                    fallback={
+                      <div className="p-4 flex items-center justify-center">
+                        <Spinner />
+                      </div>
+                    }
+                  >
+                    {ComponentToRender}
+                  </Suspense>
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })}
+    </div>
+  );
+};
+
+export default M365ToolsCollapsiblePanels;
+
+
+<Route
+  path={MenuKey.M365_Management_Tools}
+  element={
+    <Suspense fallback={<div>Loading...</div>}>
+      <M365ManagementTools />
+    </Suspense>
+  }
+>
+  <Route path=":toolName" />
+</Route>
+
+
 
