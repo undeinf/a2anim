@@ -1,0 +1,398 @@
+m365-management-tools.module.tsx
+
+import React from 'react';
+import { Outlet } from 'react-router-dom';
+import { M365ToolsCollapsiblePanels } from './components/m365Tools-collapsible-panels.component';
+import { ModuleHeader } from '../../common-components';
+import { WindowDevToolsFilled } from '@fluentui/react-icons';
+
+export const M365ManagementTools: React.FC = () => {
+  return (
+    <div className="m365-tools-container">
+      <ModuleHeader
+        heading={
+          <div className="flex items-center justify-start pb-3">
+            <span>
+              <WindowDevToolsFilled color="#fff" />
+            </span>
+            <h4 className="pl-3 text-4xl text-white">
+              M365 Administration Tools
+            </h4>
+          </div>
+        }
+        showSearch={false}
+      />
+      <hr />
+      {/* 
+        If your router uses nested route children with <Outlet />:
+        use <Outlet /> here.
+        If M365ManagementTools is directly mounted on /m365Tools/*:
+        keep <M365ToolsCollapsiblePanels /> here.
+      */}
+      <M365ToolsCollapsiblePanels />
+    </div>
+  );
+};
+
+export default M365ManagementTools;
+
+
+
+m365Tools-collapsible-panels.component.tsx
+
+
+import React, { useEffect, useState, useMemo, lazy, Suspense } from 'react';
+import './m365Tools-collapsible-panels.component.style.css';
+// import { getM365ToolsPermission } from '../../../services/api-list';
+import { getEnumValueFromLabel, M365ToolsGroupLabels } from '../types';
+import { useGetM365ToolsPermissionsQuery } from '../../../redux';
+import { Spinner, Text } from '@fluentui/react-components';
+import {
+  GuestUserDeletetionToolModule,
+  OneDriveExternalSharingToolModule,
+  SPOAppCatalogModule,
+  SPOSiteExternalSharingComponent,
+  SPOSiteManagementLockUnlockComponent,
+  SPOSiteProvisioningComponent,
+  SPOSiteTempAccessComponent,
+} from '../sub-modules';
+
+const ISCMMRProfilesUpload = lazy(
+  () => import('../../isc-movers-membership-recovery/isc-movers-membership-recovery.module')
+);
+
+// React Router v6
+import { useParams, useNavigate } from 'react-router-dom';
+// If using React Router v5, use useHistory instead:
+// import { useParams, useHistory } from 'react-router-dom';
+
+import { M365ToolsGroupNames } from '@m365-monorepo/types';
+import { SPOBulkSiteManagementLockUnlockComponent } from '../sub-modules/spo-bulk-site-mgnt-lock-unlock';
+import { OrphanOneDriveComponent } from '../sub-modules/orphan-one-drive';
+import { M365ToolsLabelComponent } from './m365Tools-label/m365Tools-label.component';
+
+const componentsMap: Partial<Record<M365ToolsGroupNames, React.ReactNode>> = {
+  [M365ToolsGroupNames.GUEST_USER_DELETION]: <GuestUserDeletetionToolModule />,
+  [M365ToolsGroupNames.ONEDRIVE_EXTERNAL_SHARING]: <OneDriveExternalSharingToolModule />,
+  [M365ToolsGroupNames.ENABLE_APP_CATALOG]: <SPOAppCatalogModule />,
+  [M365ToolsGroupNames.SPO_SITE_LOCK_UNLOCK]: <SPOSiteManagementLockUnlockComponent />,
+  [M365ToolsGroupNames.SPO_BULK_SITE_LOCK_UNLOCK]: <SPOBulkSiteManagementLockUnlockComponent />,
+  [M365ToolsGroupNames.ORPHAN_ONEDRIVE_ACCESS]: <OrphanOneDriveComponent />,
+  [M365ToolsGroupNames.SPO_SITE_TEMP_ACCESS]: <SPOSiteTempAccessComponent />,
+  [M365ToolsGroupNames.SITE_PROVISION_MOD]: <SPOSiteProvisioningComponent />,
+  [M365ToolsGroupNames.ENABLE_EXTERNAL_SHARE]: <SPOSiteExternalSharingComponent />,
+  [M365ToolsGroupNames.SPO_ISC_MOVERS]: <ISCMMRProfilesUpload isRITMRequired={true} />,
+};
+
+export const M365ToolsCollapsiblePanels: React.FC<{}> = () => {
+  const [activeTile, setActiveTile] = useState<M365ToolsGroupNames | null | ''>(
+    null
+  );
+
+  const {
+    data,
+    refetch,
+    isSuccess,
+    isError,
+    isLoading,
+  } = useGetM365ToolsPermissionsQuery(null);
+
+  const modifiedData = useMemo(() => data?.modified || [], [data]);
+
+  // Read child route parameter: /m365Tools/:toolName
+  const { toolName } = useParams<{ toolName?: string }>();
+  const navigate = useNavigate();
+  // React Router v5: const history = useHistory();
+
+  /**
+   * Helper function to resolve the toolName route param to a valid M365ToolsGroupNames key
+   */
+  const resolveGroupName = (param: string): M365ToolsGroupNames | null => {
+    if (componentsMap[param as M365ToolsGroupNames]) {
+      return param as M365ToolsGroupNames;
+    }
+    const matchedKey = (Object.keys(componentsMap) as M365ToolsGroupNames[]).find(
+      (k) => k.toLowerCase() === param.toLowerCase()
+    );
+    if (matchedKey) return matchedKey;
+
+    const fromLabel = getEnumValueFromLabel(param) as M365ToolsGroupNames;
+    if (fromLabel && componentsMap[fromLabel]) {
+      return fromLabel;
+    }
+    return null;
+  };
+
+  /**
+   * Sync activeTile with child route URL parameter (:toolName)
+   */
+  useEffect(() => {
+    if (toolName) {
+      const resolved = resolveGroupName(toolName);
+      if (resolved) {
+        setActiveTile(resolved);
+      }
+    } else {
+      setActiveTile(null);
+    }
+  }, [toolName]);
+
+  useEffect(() => {
+    refetch();
+  }, []);
+
+  /**
+   * Toggle tile expansion and sync with URL child route:
+   * - Clicking active tile: collapses and navigates back to base route `/m365Tools`
+   * - Clicking inactive tile: expands and navigates to child route `/m365Tools/:toolName`
+   */
+  const toggleTile = (id: M365ToolsGroupNames) => {
+    console.log('componentsMap[id]', componentsMap[id], id, componentsMap);
+    if (!componentsMap[id]) return;
+
+    if (activeTile === id) {
+      // Collapse tile and navigate back to base route
+      navigate('/m365Tools');
+      // For React Router v5: history.push('/m365Tools');
+      setActiveTile(null);
+    } else {
+      // Expand tile and update URL to child route
+      navigate(`/m365Tools/${id}`);
+      // For React Router v5: history.push(`/m365Tools/${id}`);
+      setActiveTile(id);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="pt-4 flex w-full justify-start items-center">
+        <Spinner />
+        &nbsp;&nbsp;Loading...
+      </div>
+    );
+  }
+
+  return (
+    <div className="collapsible-panel grid grid-cols-auto-fit-200-1fr gap-4 p-5">
+      {(modifiedData || [])
+        .filter((tile) => tile.validUser)
+        .map((tile, index) => {
+          const name: M365ToolsGroupNames = getEnumValueFromLabel(
+            tile.groupName
+          ) as M365ToolsGroupNames;
+          // console.log("name", name, tile.groupName)
+          const ComponentToRender = componentsMap[name];
+
+          return (
+            <React.Fragment key={index}>
+              <div
+                className={`tile h-32 border border-gray-300 rounded-lg bg-gray-50 dark:bg-black/30 flex justify-center items-center text-center cursor-pointer transition-colors duration-300 ease-in-out hover:bg-gray-200 hover:dark:bg-black/30 ${
+                  activeTile === name
+                    ? 'tile-active bg-cyan-50 border !border-blue-500 dark:bg-black/25 shadow-md'
+                    : ''
+                }`}
+                onClick={() => toggleTile(name)}
+              >
+                <div className="tile-header font-bold flex items-center ">
+                  <Text className="pr-2">
+                    <M365ToolsLabelComponent label={tile.groupName} />
+                  </Text>
+                  <span
+                    className={`arrow border-l-transparent border-r-transparent ${
+                      activeTile === name
+                        ? 'down border-t-[6px] dark:border-t-white border-t-black rotate-0'
+                        : 'right border-t-[6px] dark:border-t-white border-t-black -rotate-90'
+                    }`}
+                  ></span>
+                </div>
+              </div>
+              {activeTile === name && ComponentToRender && (
+                <div
+                  className="full-width-component bg-gray-100 dark:bg-black/30 p-5 border border-gray-300 shadow-md rounded-lg mt-4"
+                  style={{ gridColumn: '1 / -1' }}
+                >
+                  <div className="px-1 py-3 mb-5 bg-[var(--colorBrandBackground)] text-white font-bold text-[20px] flex justify-center rounded-lg">
+                    <M365ToolsLabelComponent
+                      label={M365ToolsGroupLabels[activeTile] as string}
+                    />
+                  </div>
+                  <Suspense
+                    fallback={
+                      <div className="p-4 flex items-center justify-center">
+                        <Spinner />
+                      </div>
+                    }
+                  >
+                    {ComponentToRender}
+                  </Suspense>
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })}
+    </div>
+  );
+};
+
+export default M365ToolsCollapsiblePanels;
+
+
+m365Tools-label.component.tsx
+
+import { M365ToolsGroupNames } from '@m365-monorepo/types';
+import React, { useCallback } from 'react';
+import { M365ToolsGroupLabels } from '../../types';
+
+export const M365ToolsLabelComponent: React.FC<{
+  label: M365ToolsGroupNames | string;
+}> = ({ label }) => {
+  const getName = useCallback(
+    (name: string) => {
+      // const name:string = M365ToolsGroupLabels[nameParam]
+
+      if (
+        name &&
+        name.toLowerCase() === M365ToolsGroupLabels.spo_isc_movers.toLowerCase()
+      ) {
+        return M365ToolsGroupLabels.spo_isc_movers_caption;
+      }
+      return name;
+    },
+    [M365ToolsGroupLabels]
+  );
+
+  return <>{getName(label)}</>;
+};
+
+export default M365ToolsLabelComponent;
+
+
+m365-tools-api.ts
+
+import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
+import { M365ToolsGroupDataSet, M365ToolsGroupNames } from '@m365-monorepo/types';
+import { M365ToolsGroupLabels } from '../modules/m365-management-tools/types';
+import { getM365ToolsPermissionService } from '../services/api-list';
+import { showErrorToast } from '../common-components';
+
+export const m365ToolsApi = createApi({
+  reducerPath: 'm365ToolsApi',
+  baseQuery: fetchBaseQuery({ baseUrl: '/' }),
+  endpoints: (builder) => ({
+    getM365ToolsPermissions: builder.query<M365ToolsGroupDataSet, null>({
+      queryFn: async (...args) => {
+        try {
+          const originalData = await getM365ToolsPermissionService();
+
+          const modifiedData = await getM365ToolsPermissionService();
+
+          const shouldAddSPOLockUnlock = originalData.some(
+            (item) =>
+              (item.groupName.toLowerCase() ===
+                M365ToolsGroupLabels.lock_group.toLowerCase() ||
+                item.groupName.toLowerCase() ===
+                  M365ToolsGroupLabels.unlock_group.toLowerCase()) &&
+              item.validUser === true
+          );
+
+          // SPO Site Lock Unlock
+          if (shouldAddSPOLockUnlock) {
+            modifiedData.push({
+              groupName: M365ToolsGroupLabels.spo_site_lock_unlock as M365ToolsGroupNames,
+              validUser: true,
+            });
+
+            // bulk site lock/unlock
+            modifiedData.push({
+              groupName: M365ToolsGroupLabels.spo_bulk_site_lock_unlock as M365ToolsGroupNames,
+              validUser: true,
+            });
+          }
+
+          const shouldAddSPOSiteTempAccess = originalData.some(
+            (item) =>
+              item.groupName.toLowerCase() ===
+                M365ToolsGroupLabels.spo_group.toLowerCase() &&
+              item.validUser === true
+          );
+
+          if (shouldAddSPOSiteTempAccess) {
+            modifiedData.push({
+              groupName: M365ToolsGroupLabels.spo_site_temp_access as M365ToolsGroupNames,
+              validUser: true,
+            });
+          }
+
+          const shouldAddSPOSiteProvision = originalData.some(
+            (item) =>
+              item.groupName.toLowerCase() ===
+                M365ToolsGroupLabels.site_provision_group.toLowerCase() &&
+              item.validUser === true
+          );
+
+          if (shouldAddSPOSiteProvision) {
+            modifiedData.push({
+              groupName: M365ToolsGroupLabels.site_provision_group_mod as M365ToolsGroupNames,
+              validUser: true,
+            });
+          }
+
+          // removed not required groups
+          const modifiedList = modifiedData.filter((item) => {
+            if (
+              item.groupName.toLowerCase() ===
+                M365ToolsGroupLabels.lock_group.toLowerCase() ||
+              item.groupName.toLowerCase() ===
+                M365ToolsGroupLabels.spo_group.toLowerCase() ||
+              item.groupName.toLowerCase() ===
+                M365ToolsGroupLabels.unlock_group.toLowerCase() ||
+              item.groupName.toLowerCase() ===
+                M365ToolsGroupLabels.site_provision_group.toLowerCase()
+            ) {
+              return false;
+            }
+            return true;
+          });
+
+          const data: M365ToolsGroupDataSet = {
+            modified: modifiedList,
+            original: originalData,
+          };
+
+          console.log('modifiedData', modifiedData);
+
+          return {
+            data,
+          };
+        } catch (error: any) {
+          showErrorToast(error, 'Unable to fetch Copilot Licence Info');
+          return {
+            error: {
+              status: error.response?.status || 500,
+              statusText: error.response?.statusText || 'Internal Server Error',
+              data:
+                error.response?.data ||
+                error.message ||
+                'An unknow error occured',
+            },
+          };
+        }
+      },
+    }),
+  }),
+});
+
+export const { useGetM365ToolsPermissionsQuery } = m365ToolsApi;
+export default m365ToolsApi;
+
+
+import { Route, Routes } from 'react-router-dom';
+import M365ManagementTools from './m365-management-tools.module';
+
+// Route definition enabling the base route and child route:
+<Route path="/m365Tools/*" element={<M365ManagementTools />} />
+
+<Route path="/m365Tools" element={<M365ManagementTools />}>
+  <Route index element={<M365ToolsCollapsiblePanels />} />
+  <Route path=":toolName" element={<M365ToolsCollapsiblePanels />} />
+</Route>
