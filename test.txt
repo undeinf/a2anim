@@ -1,0 +1,425 @@
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+// ==========================================
+// 1. Zod Validation Schemas & Helpers
+// ==========================================
+
+export const validateMultipleDomains = (domains: string): boolean => {
+  const DOMAIN_REGEX = /^[a-zA-Z0-9]+([\-\.][a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
+  if (!domains) return false;
+
+  return domains
+    .split(/[,;\n\r]+/)
+    .map((domain) => domain.trim())
+    .filter(Boolean)
+    .every((domain) => DOMAIN_REGEX.test(domain));
+};
+
+export const SPOTeamsExternalSharingGetDataSchema = z.object({
+  webAddDropdown: z
+    .string({ required_error: 'Please select value from the dropdown' })
+    .min(1, 'Website address dropdown is required'),
+  siteUrl: z
+    .string({ required_error: 'Please provide site URL' })
+    .min(1, 'Please provide site URL')
+});
+
+export type SPOTeamsExternalSharingGetDataValues = z.infer<
+  typeof SPOTeamsExternalSharingGetDataSchema
+>;
+
+export const SPOTeamsExternalSharingSetDataSchema = z
+  .object({
+    State: z
+      .string({ required_error: 'Please choose at least one operation' })
+      .min(1, 'Please choose at least one operation'),
+    AllowDomains: z.string().optional(),
+    Reason: z
+      .string({ required_error: 'Please provide reason' })
+      .min(1, 'Please provide reason')
+  })
+  .superRefine((data, ctx) => {
+    // Only validate AllowDomains if operation is Enable
+    if (data.State === 'ExternalUserSharingOnly') {
+      if (!data.AllowDomains || data.AllowDomains.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['AllowDomains'],
+          message: 'Please provide domain name(s)'
+        });
+      } else if (!validateMultipleDomains(data.AllowDomains)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['AllowDomains'],
+          message: 'One or more domains are invalid or improperly separated.'
+        });
+      }
+    }
+  });
+
+export type SPOTeamsExternalSharingSetDataValues = z.infer<
+  typeof SPOTeamsExternalSharingSetDataSchema
+>;
+
+const OPERATION_OPTIONS = [
+  { value: 'Disable', label: 'Disable' },
+  { value: 'ExternalUserSharingOnly', label: 'Enable (External User Sharing Only)' }
+];
+
+const mapStatusToRadio = (status?: string): 'Disable' | 'ExternalUserSharingOnly' | '' => {
+  if (status === '0') return 'Disable';
+  if (status === '1') return 'ExternalUserSharingOnly';
+  return '';
+};
+
+// ==========================================
+// 2. Main Unified Component
+// ==========================================
+
+export const SPOUserExternalSharingModule: React.FC = () => {
+  const { screenWidth } = useScreen();
+
+  const screenOrientation = useMemo<'horizontal' | 'vertical'>(
+    () => (screenWidth > ScreenSize.tablet ? 'horizontal' : 'vertical'),
+    [screenWidth]
+  );
+
+  // Global Notification State
+  const [msg, setMsg] = useState<StatusMessageProps>({
+    message: '',
+    status: Status.SUCCESS,
+    type: 'success'
+  });
+
+  // Track verified backend data
+  const [boundData, setBoundData] = useState<{
+    allowedDomain: string;
+    status: string;
+  }>({
+    allowedDomain: '',
+    status: ''
+  });
+
+  // Service 1: Get Data
+  const [
+    fetchSiteData,
+    {
+      data: getDataResponse,
+      isLoading: isGetDataLoading,
+      isSuccess: isGetDataSuccess,
+      isError: isGetDataError
+    }
+  ] = useSPOTeamsExSharingGetDataMutation();
+
+  // Service 2: Save Data
+  const [
+    submitSiteData,
+    {
+      isLoading: isSetDataLoading,
+      isSuccess: isSetDataSuccess,
+      isError: isSetDataError
+    }
+  ] = useSPOTeamsExSharingSetDataMutation();
+
+  // Top Section URL Form
+  const urlForm = useForm<SPOTeamsExternalSharingGetDataValues>({
+    resolver: zodResolver(SPOTeamsExternalSharingGetDataSchema),
+    defaultValues: {
+      webAddDropdown: 'https://share.novartis.net/sites/',
+      siteUrl: ''
+    },
+    mode: 'onChange'
+  });
+
+  // Bottom Section Operations Form
+  const operationForm = useForm<SPOTeamsExternalSharingSetDataValues>({
+    resolver: zodResolver(SPOTeamsExternalSharingSetDataSchema),
+    defaultValues: {
+      AllowDomains: '',
+      Reason: '',
+      State: '' // Default: No radio button selected
+    },
+    mode: 'onChange'
+  });
+
+  const selectedState = operationForm.watch('State');
+
+  // ==========================================
+  // Handlers & Side Effects
+  // ==========================================
+
+  // Populate data silently when "Get Data" service responds
+  useEffect(() => {
+    if (isGetDataSuccess && getDataResponse) {
+      setBoundData({
+        allowedDomain: getDataResponse.allowedDomain || '',
+        status: getDataResponse.status !== undefined ? String(getDataResponse.status) : ''
+      });
+
+      operationForm.reset({
+        AllowDomains: getDataResponse.allowedDomain || '',
+        State: mapStatusToRadio(
+          getDataResponse.status !== undefined ? String(getDataResponse.status) : ''
+        ),
+        Reason: operationForm.getValues('Reason') || ''
+      });
+
+      // Clear any top banner notification on successful fetch
+      setMsg({ message: '', status: Status.SUCCESS, type: 'success' });
+    } else if (isGetDataError) {
+      setMsg({
+        status: Status.ERROR,
+        type: 'error',
+        message: 'Failed to fetch site information.'
+      });
+    }
+  }, [isGetDataSuccess, isGetDataError, getDataResponse, operationForm]);
+
+  // Handle Save API response notifications
+  useEffect(() => {
+    if (!isSetDataLoading && isSetDataSuccess) {
+      setMsg({
+        status: Status.SUCCESS,
+        type: 'success',
+        message: 'Operation completed successfully.'
+      });
+      operationForm.resetField('Reason');
+    } else if (!isSetDataLoading && isSetDataError) {
+      setMsg({
+        status: Status.ERROR,
+        type: 'error',
+        message: 'Error while updating records.'
+      });
+    }
+  }, [isSetDataLoading, isSetDataSuccess, isSetDataError, operationForm]);
+
+  // Action 1: "Get Data" Button Click
+  const handleGetDataSubmit = useCallback(
+    async (e: React.MouseEvent) => {
+      e.preventDefault();
+
+      const isValid = await urlForm.trigger();
+      if (isValid) {
+        const { webAddDropdown, siteUrl } = urlForm.getValues();
+        fetchSiteData({
+          siteCollectionURL: webAddDropdown + siteUrl
+        });
+      }
+    },
+    [urlForm, fetchSiteData]
+  );
+
+  // Action 2: "Submit" Button Click
+  const handleSetDataSubmit = useCallback(
+    async (e: React.MouseEvent) => {
+      e.preventDefault();
+
+      // Validate both forms simultaneously
+      const [isUrlValid, isOperationValid] = await Promise.all([
+        urlForm.trigger(),
+        operationForm.trigger()
+      ]);
+
+      if (isUrlValid && isOperationValid) {
+        const currentUrl =
+          urlForm.getValues('webAddDropdown') + urlForm.getValues('siteUrl');
+        const formValues = operationForm.getValues();
+
+        const labelValue =
+          OPERATION_OPTIONS.find((opt) => opt.value === formValues.State)?.label || '';
+
+        submitSiteData({
+          operation: labelValue,
+          reason: formValues.Reason,
+          SharingAllowedDomainList:
+            formValues.State === 'ExternalUserSharingOnly' ? formValues.AllowDomains || '' : '',
+          SharingCapability: formValues.State,
+          siteCollectionURL: currentUrl
+        });
+      }
+    },
+    [urlForm, operationForm, submitSiteData]
+  );
+
+  // Action 3: Reset
+  const handleResetBottomSection = useCallback(() => {
+    operationForm.reset({
+      AllowDomains: boundData.allowedDomain || '',
+      State: mapStatusToRadio(boundData.status),
+      Reason: ''
+    });
+    operationForm.clearErrors();
+  }, [boundData, operationForm]);
+
+  // ==========================================
+  // Render
+  // ==========================================
+
+  return (
+    <div className="guest-user-deletion-base space-y-6">
+      {/* Toast Notification */}
+      {msg.message && <StatusMessageComponent {...msg} />}
+
+      {/* Top Section: URL Form */}
+      <div className="guest-user-deletion-container">
+        <Field
+          className="pb-6"
+          orientation={screenOrientation}
+          label="Website Address"
+          validationMessage={
+            urlForm.formState.errors?.webAddDropdown?.message ||
+            urlForm.formState.errors?.siteUrl?.message
+          }
+          validationState={
+            urlForm.formState.errors?.webAddDropdown || urlForm.formState.errors?.siteUrl
+              ? 'error'
+              : 'none'
+          }
+        >
+          <div className="flex w-full gap-x-2">
+            <Controller
+              name="webAddDropdown"
+              control={urlForm.control}
+              render={({ field: { onChange, value } }) => (
+                <div className="flex">
+                  <CommonDropdown
+                    defaultSelectedOptions={['sn']}
+                    placeholder="Select site"
+                    onOptionSelect={(_, d) => onChange(d.optionValue)}
+                    value={value}
+                  >
+                    <Option key={1} value="https://share.novartis.net/sites/">
+                      https://share.novartis.net/sites/
+                    </Option>
+                  </CommonDropdown>
+                </div>
+              )}
+            />
+
+            <Controller
+              name="siteUrl"
+              control={urlForm.control}
+              render={({ field: { onChange, value } }) => (
+                <div className="flex w-full">
+                  <Input
+                    className="block w-full"
+                    placeholder="Site URL"
+                    value={value}
+                    onChange={(_, d) => onChange(d.value)}
+                  />
+                </div>
+              )}
+            />
+          </div>
+        </Field>
+
+        <div className="w-full flex justify-end">
+          <CommonButton disabled={isGetDataLoading} onClick={handleGetDataSubmit}>
+            {isGetDataLoading ? 'Validating...' : 'Get Data'}
+          </CommonButton>
+        </div>
+      </div>
+
+      {/* Bottom Section: Operations Form */}
+      <div className="guest-user-deletion-container">
+        {/* Operation Radio Field */}
+        <Field
+          className="pb-6"
+          orientation={screenOrientation}
+          label="Operation"
+          validationMessage={operationForm.formState.errors?.State?.message}
+          validationState={operationForm.formState.errors?.State ? 'error' : 'none'}
+        >
+          <Controller
+            name="State"
+            control={operationForm.control}
+            render={({ field: { onChange, value } }) => (
+              <RadioGroup
+                layout="vertical"
+                value={value}
+                onChange={(_, d) => {
+                  onChange(d.value);
+                  if (d.value === 'Disable') {
+                    operationForm.clearErrors('AllowDomains');
+                  }
+                }}
+              >
+                {OPERATION_OPTIONS.map((opt) => (
+                  <Radio key={opt.value} value={opt.value} label={opt.label} />
+                ))}
+              </RadioGroup>
+            )}
+          />
+        </Field>
+
+        {/* Allowed Domains Textarea (Visible only when Enable is selected) */}
+        {selectedState === 'ExternalUserSharingOnly' && (
+          <Field
+            className="pb-6"
+            orientation={screenOrientation}
+            label="Allow only specific domain"
+            validationMessage={operationForm.formState.errors?.AllowDomains?.message}
+            validationState={
+              operationForm.formState.errors?.AllowDomains ? 'error' : 'none'
+            }
+          >
+            <Controller
+              name="AllowDomains"
+              control={operationForm.control}
+              render={({ field: { onChange, value } }) => (
+                <Textarea
+                  cols={3}
+                  className="block w-full"
+                  value={value}
+                  onChange={(_, d) => onChange(d.value)}
+                />
+              )}
+            />
+          </Field>
+        )}
+
+        {/* Reason Textarea */}
+        <Field
+          className="pb-6"
+          orientation={screenOrientation}
+          label="Reason"
+          validationMessage={operationForm.formState.errors?.Reason?.message}
+          validationState={operationForm.formState.errors?.Reason ? 'error' : 'none'}
+        >
+          <Controller
+            name="Reason"
+            control={operationForm.control}
+            render={({ field: { onChange, value } }) => (
+              <Textarea
+                cols={3}
+                className="block w-full"
+                resize="both"
+                value={value}
+                onChange={(_, d) => onChange(d.value)}
+              />
+            )}
+          />
+        </Field>
+
+        {/* Action Buttons */}
+        <div className="flex justify-end gap-3">
+          <CommonButton disabled={isSetDataLoading} onClick={handleResetBottomSection}>
+            Reset
+          </CommonButton>
+          <CommonButton
+            appearance="primary"
+            disabled={isSetDataLoading}
+            onClick={handleSetDataSubmit}
+          >
+            {isSetDataLoading ? 'Submitting...' : 'Submit'}
+          </CommonButton>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default SPOUserExternalSharingModule;
