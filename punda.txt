@@ -1,225 +1,221 @@
-m365-management-tools.module.tsx
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Outlet } from 'react-router-dom';
+// Keep your existing imports for hooks, HeaderComponent, NavbarComponent, NotFoundLayout, UIReloadNotificationBar, Toastr
 
-
-import React from 'react';
-import { M365ToolsCollapsiblePanels } from './components/m365Tools-collapsible-panels.component';
-import { ModuleHeader } from '../../common-components';
-import { WindowDevToolsFilled } from '@fluentui/react-icons';
-
-export const M365ManagementTools: React.FC = () => {
+const LayoutSkeleton: React.FC<{ message?: string }> = ({ message }) => {
   return (
-    <div className="m365-tools-container">
-      <ModuleHeader
-        heading={
-          <div className="flex items-center justify-start pb-3">
-            <span>
-              <WindowDevToolsFilled color="#fff" />
-            </span>
-            <h4 className="pl-3 text-4xl text-white">
-              M365 Administration Tools
-            </h4>
+    <div
+      className="flex flex-col h-screen bg-(--colorNeutralBackground1) animate-pulse"
+      role="status"
+      aria-label={message || 'Loading workspace'}
+    >
+      {/* Fixed Header Skeleton */}
+      <div className="h-[55px] max-[635px]:h-[80px] border-b border-gray-200 dark:border-gray-800 px-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="size-7 rounded-md bg-gray-200 dark:bg-gray-700" />
+          <div className="h-5 w-44 rounded bg-gray-200 dark:bg-gray-700" />
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="hidden sm:block h-8 w-56 rounded-md bg-gray-200 dark:bg-gray-700" />
+          <div className="size-8 rounded-full bg-gray-200 dark:bg-gray-700" />
+        </div>
+      </div>
+
+      {/* Body Skeleton: Left Sidebar + Main Content */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar Skeleton */}
+        <div className="w-[60px] md:w-[250px] border-r border-gray-200 dark:border-gray-800 p-3 space-y-3 shrink-0">
+          {Array.from({ length: 8 }).map((_, idx) => (
+            <div key={idx} className="flex items-center gap-3">
+              <div className="size-6 rounded bg-gray-200 dark:bg-gray-700 shrink-0" />
+              <div className="hidden md:block h-4 flex-1 rounded bg-gray-200 dark:bg-gray-700" />
+            </div>
+          ))}
+        </div>
+
+        {/* Main Content Area Skeleton */}
+        <div className="flex-1 p-5 space-y-5 overflow-hidden">
+          {/* Banner / Module Header Skeleton */}
+          <div className="h-24 w-full rounded-lg bg-gray-200 dark:bg-gray-700" />
+
+          {/* Breadcrumb Skeleton */}
+          <div className="flex items-center gap-2">
+            <div className="size-4 rounded bg-gray-200 dark:bg-gray-700" />
+            <div className="h-3.5 w-36 rounded bg-gray-200 dark:bg-gray-700" />
           </div>
-        }
-        showSearch={false}
-      />
-      <hr />
-      <M365ToolsCollapsiblePanels />
+
+          {/* 4-Column Tiles Grid Skeleton */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pt-2">
+            {Array.from({ length: 8 }).map((_, idx) => (
+              <div
+                key={idx}
+                className="h-32 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-800/60 flex items-center justify-center p-4"
+              >
+                <div className="h-4 w-28 rounded bg-gray-200 dark:bg-gray-700" />
+              </div>
+            ))}
+          </div>
+
+          {message && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 pt-2">
+              {message}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Footer Skeleton */}
+      <div className="h-12 border-t border-gray-200 dark:border-gray-800 px-4 flex items-center justify-center">
+        <div className="h-3 w-48 rounded bg-gray-200 dark:bg-gray-700" />
+      </div>
     </div>
   );
 };
 
-export default M365ManagementTools;
+export const ResizableLayoutModule: React.FC = () => {
+  const { isValidModule } = useGetCurrentModuleName();
+  const [isCollapse, setIsCollapse] = useState<boolean>(true);
+  const [navWidth, setNavWidth] = useState<number>(250);
+  const [isResizing, setIsResizing] = useState<boolean>(false);
+  const { isMobile } = useScreen();
 
-m365Tools-collapsible-panels.component.tsx
+  // Refs prevent re-binding mousemove listeners on every pixel dragged
+  const dragStartXRef = useRef<number>(0);
+  const dragStartWidthRef = useRef<number>(250);
 
-import React, { useEffect, useState, useMemo, lazy, Suspense, useCallback } from 'react';
-import './m365Tools-collapsible-panels.component.style.css';
-import { getEnumValueFromLabel, M365ToolsGroupLabels } from '../types';
-import { useGetM365ToolsPermissionsQuery } from '../../../redux';
-import { Spinner, Text } from '@fluentui/react-components';
-import {
-  GuestUserDeletetionToolModule,
-  OneDriveExternalSharingToolModule,
-  SPOAppCatalogModule,
-  SPOSiteExternalSharingComponent,
-  SPOSiteManagementLockUnlockComponent,
-  SPOSiteProvisioningComponent,
-  SPOSiteTempAccessComponent,
-} from '../sub-modules';
+  // Query hooks
+  const { isLoading: isMenuLoading } = useGetMenusQuery(null);
+  const { isLoading: isUserInfoLoading } = useGetUserInfoQuery(null);
+  const { isLoading: isRoleLoading } = useGetUserRoleQuery(null);
 
-const ISCMMRProfilesUpload = lazy(
-  () => import('../../isc-movers-membership-recovery/isc-movers-membership-recovery.module')
-);
+  const isBootstrapping = isUserInfoLoading || isRoleLoading || isMenuLoading;
 
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { M365ToolsGroupNames } from '@m365-monorepo/types';
-import { SPOBulkSiteManagementLockUnlockComponent } from '../sub-modules/spo-bulk-site-mgnt-lock-unlock';
-import { OrphanOneDriveComponent } from '../sub-modules/orphan-one-drive';
-import { M365ToolsLabelComponent } from './m365Tools-label/m365Tools-label.component';
-
-const componentsMap: Partial<Record<M365ToolsGroupNames, React.ReactNode>> = {
-  [M365ToolsGroupNames.GUEST_USER_DELETION]: <GuestUserDeletetionToolModule />,
-  [M365ToolsGroupNames.ONEDRIVE_EXTERNAL_SHARING]: <OneDriveExternalSharingToolModule />,
-  [M365ToolsGroupNames.ENABLE_APP_CATALOG]: <SPOAppCatalogModule />,
-  [M365ToolsGroupNames.SPO_SITE_LOCK_UNLOCK]: <SPOSiteManagementLockUnlockComponent />,
-  [M365ToolsGroupNames.SPO_BULK_SITE_LOCK_UNLOCK]: <SPOBulkSiteManagementLockUnlockComponent />,
-  [M365ToolsGroupNames.ORPHAN_ONEDRIVE_ACCESS]: <OrphanOneDriveComponent />,
-  [M365ToolsGroupNames.SPO_SITE_TEMP_ACCESS]: <SPOSiteTempAccessComponent />,
-  [M365ToolsGroupNames.SITE_PROVISION_MOD]: <SPOSiteProvisioningComponent />,
-  [M365ToolsGroupNames.ENABLE_EXTERNAL_SHARE]: <SPOSiteExternalSharingComponent />,
-  [M365ToolsGroupNames.SPO_ISC_MOVERS]: <ISCMMRProfilesUpload isRITMRequired={true} />,
-};
-
-export const M365ToolsCollapsiblePanels: React.FC<{}> = () => {
-  const [activeTile, setActiveTile] = useState<M365ToolsGroupNames | null | ''>(null);
-
-  const { data, refetch, isLoading } = useGetM365ToolsPermissionsQuery(null);
-  const modifiedData = useMemo(() => data?.modified || [], [data]);
-
-  const { toolName } = useParams<{ toolName?: string }>();
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  // Dynamically determine current base path (e.g. /module/m365-management-tools)
-  const basePath = useMemo(() => {
-    if (toolName && location.pathname.endsWith(`/${toolName}`)) {
-      return location.pathname.slice(0, -(toolName.length + 1));
+  useEffect(() => {
+    if (!isMobile && !isCollapse) {
+      setNavWidth(250);
+    } else if (isCollapse || isMobile) {
+      setNavWidth(60);
     }
-    return location.pathname.replace(/\/$/, '');
-  }, [location.pathname, toolName]);
+  }, [isCollapse, isMobile]);
 
-  const resolveGroupName = useCallback((param: string): M365ToolsGroupNames | null => {
-    if (componentsMap[param as M365ToolsGroupNames]) {
-      return param as M365ToolsGroupNames;
-    }
-    const matchedKey = (Object.keys(componentsMap) as M365ToolsGroupNames[]).find(
-      (k) => k.toLowerCase() === param.toLowerCase()
-    );
-    if (matchedKey) return matchedKey;
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (isCollapse || isMobile) return;
+      e.preventDefault();
+      dragStartXRef.current = e.pageX;
+      dragStartWidthRef.current = navWidth;
+      setIsResizing(true);
+    },
+    [isCollapse, isMobile, navWidth]
+  );
 
-    const fromLabel = getEnumValueFromLabel(param) as M365ToolsGroupNames;
-    if (fromLabel && componentsMap[fromLabel]) {
-      return fromLabel;
-    }
-    return null;
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const diff = e.pageX - dragStartXRef.current;
+      const newWidth = Math.max(200, Math.min(500, dragStartWidthRef.current + diff));
+      setNavWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    document.body.classList.add('select-none', 'cursor-col-resize');
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.body.classList.remove('select-none', 'cursor-col-resize');
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  // Suppress benign ResizeObserver overlay errors with proper cleanup
+  useEffect(() => {
+    const handleResizeObserverError = (e: ErrorEvent) => {
+      if (
+        e.message === 'ResizeObserver loop limit exceeded' ||
+        e.message === 'ResizeObserver loop completed with undelivered notifications.'
+      ) {
+        const overlayDiv = document.getElementById('webpack-dev-server-client-overlay-div');
+        const overlay = document.getElementById('webpack-dev-server-client-overlay');
+        if (overlayDiv) overlayDiv.style.display = 'none';
+        if (overlay) overlay.style.display = 'none';
+      }
+    };
+
+    window.addEventListener('error', handleResizeObserverError);
+    return () => window.removeEventListener('error', handleResizeObserverError);
   }, []);
 
-  // Deep linking: auto-expand tile if :toolName is present in URL
-  useEffect(() => {
-    if (toolName) {
-      const resolved = resolveGroupName(toolName);
-      if (resolved) {
-        setActiveTile(resolved);
-      }
-    } else {
-      setActiveTile(null);
-    }
-  }, [toolName, resolveGroupName]);
+  const preloadMessage = isRoleLoading
+    ? 'Loading User Roles...'
+    : isUserInfoLoading
+    ? 'Loading User Information...'
+    : isMenuLoading
+    ? 'Loading Menubar...'
+    : '';
 
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
+  if (!isValidModule) {
+    return <NotFoundLayout />;
+  }
 
-  // Original accordion toggle in-place + dynamic route update
-  const toggleTile = (id: M365ToolsGroupNames) => {
-    if (!componentsMap[id]) return;
-
-    if (activeTile === id) {
-      // Collapse tile in-place and revert URL to base path
-      setActiveTile(null);
-      navigate(basePath, { replace: false });
-    } else {
-      // Expand tile in-place and update URL with tool name
-      setActiveTile(id);
-      navigate(`${basePath}/${id}`, { replace: false });
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <div className="pt-4 flex w-full justify-start items-center">
-        <Spinner />
-        &nbsp;&nbsp;Loading...
-      </div>
-    );
+  if (isBootstrapping) {
+    return <LayoutSkeleton message={preloadMessage} />;
   }
 
   return (
-    <div className="collapsible-panel grid grid-cols-auto-fit-200-1fr gap-4 p-5">
-      {(modifiedData || [])
-        .filter((tile) => tile.validUser)
-        .map((tile, index) => {
-          const name: M365ToolsGroupNames = getEnumValueFromLabel(
-            tile.groupName
-          ) as M365ToolsGroupNames;
-          const ComponentToRender = componentsMap[name];
+    <div className="flex flex-col h-screen">
+      {/* Fixed Header */}
+      <header className="resizable-layout-header bg-(--colorNeutralBackground1) flex-none h-[55px] max-[635px]:h-[80px] border-b border-gray-200 fixed top-0 inset-x-0 z-50 shadow-md">
+        <HeaderComponent />
+      </header>
 
-          return (
-            <React.Fragment key={index}>
-              <div
-                className={`tile h-32 border border-gray-300 rounded-lg bg-gray-50 dark:bg-black/30 flex justify-center items-center text-center cursor-pointer transition-colors duration-300 ease-in-out hover:bg-gray-200 hover:dark:bg-black/30 ${
-                  activeTile === name
-                    ? 'tile-active bg-cyan-50 border !border-blue-500 dark:bg-black/25 shadow-md'
-                    : ''
-                }`}
-                onClick={() => toggleTile(name)}
-              >
-                <div className="tile-header font-bold flex items-center ">
-                  <Text className="pr-2">
-                    <M365ToolsLabelComponent label={tile.groupName} />
-                  </Text>
-                  <span
-                    className={`arrow border-l-transparent border-r-transparent ${
-                      activeTile === name
-                        ? 'down border-t-[6px] dark:border-t-white border-t-black rotate-0'
-                        : 'right border-t-[6px] dark:border-t-white border-t-black -rotate-90'
-                    }`}
-                  ></span>
-                </div>
-              </div>
+      {/* Main Content Area */}
+      <div className="flex flex-1 min-h-0 pt-[55px] max-[635px]:pt-[80px]">
+        {/* Navbar with Resize Handle */}
+        <aside
+          className="resizable-layout-navbar bg-(--colorNeutralBackground1) flex-none relative transition-[width] duration-150 ease-out"
+          style={{
+            width: `${navWidth}px`,
+            transitionProperty: isResizing ? 'none' : 'width',
+          }}
+        >
+          <NavbarComponent
+            className="w-full h-full"
+            onCollapse={setIsCollapse}
+          />
 
-              {/* In-place collapsible expansion below the tile */}
-              {activeTile === name && ComponentToRender && (
-                <div
-                  className="full-width-component bg-gray-100 dark:bg-black/30 p-5 border border-gray-300 shadow-md rounded-lg mt-4"
-                  style={{ gridColumn: '1 / -1' }}
-                >
-                  <div className="px-1 py-3 mb-5 bg-[var(--colorBrandBackground)] text-white font-bold text-[20px] flex justify-center rounded-lg">
-                    <M365ToolsLabelComponent
-                      label={M365ToolsGroupLabels[activeTile] as string}
-                    />
-                  </div>
-                  <Suspense
-                    fallback={
-                      <div className="p-4 flex items-center justify-center">
-                        <Spinner />
-                      </div>
-                    }
-                  >
-                    {ComponentToRender}
-                  </Suspense>
-                </div>
-              )}
-            </React.Fragment>
-          );
-        })}
+          {/* Resize Handle (Hidden when collapsed or on mobile) */}
+          {!isCollapse && !isMobile && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sidebar"
+              onMouseDown={handleMouseDown}
+              className="absolute top-0 right-0 w-1 h-full cursor-col-resize bg-gray-300 hover:bg-blue-500 active:bg-blue-600 transition-colors"
+            />
+          )}
+        </aside>
+
+        {/* Main Content Container */}
+        <main className="resizable-layout-container bg-(--colorNeutralBackground1) flex-1 overflow-auto p-1">
+          <UIReloadNotificationBar />
+          <Outlet />
+        </main>
+      </div>
+
+      {/* Footer */}
+      <footer className="resizable-layout-footer bg-(--colorNeutralBackground1) flex-none h-16 border-t text-white flex items-center justify-center shadow-inner">
+        {/* Footer Content */}
+      </footer>
+
+      <Toastr />
     </div>
   );
 };
 
-export default M365ToolsCollapsiblePanels;
-
-
-<Route
-  path={MenuKey.M365_Management_Tools}
-  element={
-    <Suspense fallback={<div>Loading...</div>}>
-      <M365ManagementTools />
-    </Suspense>
-  }
->
-  <Route path=":toolName" />
-</Route>
-
-
-
+export default ResizableLayoutModule;
